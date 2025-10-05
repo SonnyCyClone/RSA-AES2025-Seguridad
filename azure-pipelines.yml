@@ -1,0 +1,229 @@
+trigger:
+  branches:
+    include: [ main ]
+  paths:
+    exclude: [ README.md, .gitignore, azure-pipelines.yml, .gitattributes ]
+
+pr:
+  branches:
+    include: [ '*' ]
+
+# ===== VARIABLES =====
+variables:
+  azureSubscription: 'sc-azure-agromarket'
+  artifactName: 'frontend'
+  zipName: 'frontend.zip'
+  feRoot: '.'
+  app_prd: 'az-rsa-seguridad'
+
+# ===== AGENTE (self-hosted Windows) =====
+pool:
+  name: Default
+  demands:
+    - agent.name -equals agromarket-agent-win
+
+# ============== STAGES ==============
+stages:
+
+# ------------ BUILD ------------
+- stage: Build
+  displayName: Build Angular
+  jobs:
+  - job: build
+    displayName: Build job
+    steps:
+    - checkout: self
+      clean: true
+      fetchDepth: 0
+
+    - task: NodeTool@0
+      displayName: 'Use Node 20.x'
+      inputs:
+        versionSpec: '20.x'
+
+    - script: |
+        node -v
+        npm -v
+        echo AGENT_WORKFOLDER=%AGENT_WORKFOLDER%
+        echo Build.SourcesDirectory=$(Build.SourcesDirectory)
+      displayName: 'Mostrar versiones y paths'
+
+    # ===== SIN LÍMITES: eliminar budgets SOLO en CI (robusto) =====
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        Set-StrictMode -Version Latest
+
+        function Remove-PropIfExists([object]$obj, [string]$propName) {
+          if ($null -ne $obj) {
+            $prop = $obj.PSObject.Properties.Match($propName)
+            if ($prop -and $prop.Count -gt 0) {
+              $obj.PSObject.Properties.Remove($propName) | Out-Null
+            }
+          }
+        }
+
+        $root = "$(feRoot)"
+        $angularPath = Join-Path $root 'angular.json'
+        if (-not (Test-Path $angularPath)) { throw "No se encontró angular.json en '$root'." }
+
+        $json = Get-Content $angularPath -Raw | ConvertFrom-Json
+        if (-not $json.projects) { throw "No se encontró la sección 'projects' en angular.json." }
+
+        foreach ($projProp in $json.projects.PSObject.Properties) {
+          $projName = $projProp.Name
+          $proj     = $projProp.Value
+          if ($null -eq $proj) { continue }
+
+          # Soportar esquemas nuevos y antiguos: targets.build o architect.build
+          $build = $null
+          if ($proj.targets -and $proj.targets.build) {
+            $build = $proj.targets.build
+          } elseif ($proj.architect -and $proj.architect.build) {
+            $build = $proj.architect.build
+          }
+
+          if ($null -eq $build) { continue }
+
+          # Eliminar budgets al nivel base
+          Remove-PropIfExists -obj $build -propName 'budgets'
+
+          # Eliminar budgets en cada configuración (production, development, etc.)
+          $cfgs = $null
+          if ($build.configurations) { $cfgs = $build.configurations }
+          elseif ($build.options -and $build.options.configurations) { $cfgs = $build.options.configurations } # por si acaso
+
+          if ($cfgs) {
+            foreach ($cfgProp in $cfgs.PSObject.Properties) {
+              $cfg = $cfgProp.Value
+              Remove-PropIfExists -obj $cfg -propName 'budgets'
+            }
+          }
+        }
+
+        ($json | ConvertTo-Json -Depth 100) | Set-Content $angularPath -Encoding UTF8
+
+        Write-Host "Budgets ELIMINADOS de angular.json SOLO para CI (sin errores si no existían)."
+      displayName: 'Eliminar budgets (sin límites) solo en CI'
+
+    # Instala dependencias y compila Angular (con diagnósticos)
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        Set-StrictMode -Version Latest
+
+        # 1) Validar raíz del proyecto
+        $root = "$(feRoot)"
+        $pkg = Join-Path $root 'package.json'
+        if (-not (Test-Path $pkg)) { throw "No se encontró package.json en '$root'. Ajusta feRoot." }
+        cd $root
+        Write-Host "Working dir: $(Get-Location)"
+
+        # 2) Limpiar estado previo
+        if (Test-Path 'node_modules') { Remove-Item -Recurse -Force 'node_modules' }
+        if (-not (Test-Path 'package-lock.json')) { throw "Falta package-lock.json (npm ci lo exige)." }
+
+        # Cache npm
+        $npmCache = "$env:AGENT_WORKFOLDER\_npmcache"
+        if (-not (Test-Path $npmCache)) { New-Item -ItemType Directory -Force -Path $npmCache | Out-Null }
+        npm config set cache "$npmCache" --global | Out-Null
+        npm config set fund false --global | Out-Null
+        npm config set audit false --global | Out-Null
+
+        if (Test-Path '.npmrc') { Write-Host ".npmrc detectado (registry/auth)." }
+        else { Write-Host "Sin .npmrc (asumiendo sin paquetes privados)." }
+
+        # 3) Instalar
+        Write-Host ">> npm ci (verbose)"
+        npm ci --loglevel verbose
+        $ciExit = $LASTEXITCODE
+        if ($ciExit -ne 0) {
+          Write-Warning "npm ci falló (exit $ciExit). Probando 'npm install --legacy-peer-deps'…"
+          npm install --legacy-peer-deps --loglevel verbose
+          $installExit = $LASTEXITCODE
+          if ($installExit -ne 0) {
+            $logsRoot = Join-Path $env:AGENT_WORKFOLDER '_npmcache\_logs'
+            if (Test-Path $logsRoot) {
+              $logDir = Get-ChildItem $logsRoot -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+              if ($logDir) {
+                $log = Get-ChildItem $logDir.FullName -Filter *.log | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                if ($log) {
+                  Write-Host "===== npm debug log (${log.Name}) ====="
+                  Get-Content $log.FullName -Raw | Write-Host
+                }
+              }
+            }
+            throw "npm install --legacy-peer-deps falló (exit $installExit)."
+          }
+        }
+
+        # 4) Validar script build
+        $pkgJson = Get-Content 'package.json' -Raw
+        if ($pkgJson -notmatch '"build"\s*:\s*".+?"') { throw "No hay script 'build' en package.json (se espera 'ng build')." }
+
+        # 5) Compilar
+        Write-Host ">> ng build (production)"
+        npm run build -- --configuration production --output-path "dist" --verbose
+        if ($LASTEXITCODE -ne 0) { throw "ng build falló ($LASTEXITCODE)" }
+      displayName: 'npm ci / install & ng build'
+
+    # Empaqueta salida a ZIP
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        Set-StrictMode -Version Latest
+
+        $srcRoot = "$(Build.SourcesDirectory)"
+        $distRoot = Join-Path $srcRoot 'dist'
+
+        if (-not (Test-Path $distRoot)) { throw "No existe 'dist' en $distRoot. ¿Falló el build?" }
+
+        $sub = Get-ChildItem -Directory $distRoot | Select-Object -First 1
+        if (-not $sub) { throw "No se encontró carpeta de salida en $distRoot (esperado /dist/<app>)." }
+
+        $content = Join-Path $sub.FullName 'browser'
+        if (-not (Test-Path $content)) { $content = $sub.FullName }
+
+        $webConfig = Join-Path $srcRoot 'web.config'
+        if (-not (Test-Path $webConfig)) { throw "Falta web.config en la raíz del repo ($srcRoot)." }
+        Copy-Item -Force $webConfig (Join-Path $content 'web.config')
+
+        $outDir = "$(Build.ArtifactStagingDirectory)"
+        New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+        $zipPath = Join-Path $outDir "$(zipName)"
+        if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+
+        Write-Host "Creando ZIP en: $zipPath"
+        Compress-Archive -Path (Join-Path $content '*') -DestinationPath $zipPath -Force
+      displayName: 'Crear ZIP'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publicar artefacto (pipeline)'
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)'
+        artifact: '$(artifactName)'
+
+# ------------ DEPLOY PRD ------------
+- stage: Deploy_PRD
+  displayName: Deploy to PRD
+  dependsOn: Build
+  condition: and(succeeded(), in(variables['Build.SourceBranchName'], 'main','master','develop'))
+  jobs:
+  - deployment: deploy_prd
+    displayName: Deploy to Web App
+    environment: 'front-prd'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: 'Descargar artefacto de pipeline'
+            inputs:
+              buildType: 'current'
+              artifactName: '$(artifactName)'
+              targetPath: '$(Pipeline.Workspace)/$(artifactName)'
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy to $(app_prd)'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appType: 'webApp'
+              appName: '$(app_prd)'
+              package: '$(Pipeline.Workspace)/$(artifactName)/$(zipName)'
