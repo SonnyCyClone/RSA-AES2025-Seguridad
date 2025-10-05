@@ -1,3 +1,8 @@
+# =============================
+# CI/CD Angular → Web App (Windows)
+# App: az-rsa-seguridad
+# =============================
+
 trigger:
   branches:
     include: [ main ]
@@ -10,11 +15,11 @@ pr:
 
 # ===== VARIABLES =====
 variables:
-  azureSubscription: 'sc-azure-agromarket'
+  azureSubscription: 'sc-azure-agromarket'     # Service connection con permisos sobre la Web App
   artifactName: 'frontend'
   zipName: 'frontend.zip'
   feRoot: '.'
-  app_prd: 'az-rsa-seguridad'
+  app_prd: 'az-rsa-seguridad'                  # Nombre exacto de la Web App
 
 # ===== AGENTE (self-hosted Windows) =====
 pool:
@@ -48,7 +53,7 @@ stages:
         echo Build.SourcesDirectory=$(Build.SourcesDirectory)
       displayName: 'Mostrar versiones y paths'
 
-    # ===== SIN LÍMITES: eliminar budgets SOLO en CI (robusto) =====
+    # ===== Eliminar budgets SOLO en CI (robusto) =====
     - powershell: |
         $ErrorActionPreference = 'Stop'
         Set-StrictMode -Version Latest
@@ -62,62 +67,75 @@ stages:
           }
         }
 
+        function Get-PropIfExists([object]$obj, [string]$propName) {
+          if ($null -eq $obj) { return $null }
+          $prop = $obj.PSObject.Properties.Match($propName)
+          if ($prop -and $prop.Count -gt 0) { return $obj.$propName }
+          return $null
+        }
+
         $root = "$(feRoot)"
         $angularPath = Join-Path $root 'angular.json'
-        if (-not (Test-Path $angularPath)) { throw "No se encontró angular.json en '$root'." }
+        if (-not (Test-Path $angularPath)) {
+          Write-Host "No hay angular.json en '$root'. Nada que limpiar."
+          return
+        }
 
         $json = Get-Content $angularPath -Raw | ConvertFrom-Json
-        if (-not $json.projects) { throw "No se encontró la sección 'projects' en angular.json." }
+        if (-not $json.projects) {
+          Write-Host "Sin sección 'projects' en angular.json. Nada que limpiar."
+          return
+        }
 
         foreach ($projProp in $json.projects.PSObject.Properties) {
           $projName = $projProp.Name
           $proj     = $projProp.Value
           if ($null -eq $proj) { continue }
 
-          # Soportar esquemas nuevos y antiguos: targets.build o architect.build
-          $build = $null
-          if ($proj.targets -and $proj.targets.build) {
-            $build = $proj.targets.build
-          } elseif ($proj.architect -and $proj.architect.build) {
-            $build = $proj.architect.build
+          # targets (Angular 15+) o architect (Angular 8-14)
+          $container = Get-PropIfExists $proj 'targets'
+          if ($null -eq $container) { $container = Get-PropIfExists $proj 'architect' }
+          if ($null -eq $container) {
+            Write-Host "[$projName] No tiene targets/architect. Se omite."
+            continue
           }
 
-          if ($null -eq $build) { continue }
+          $build = Get-PropIfExists $container 'build'
+          if ($null -eq $build) {
+            Write-Host "[$projName] No tiene configuración 'build'. Se omite."
+            continue
+          }
 
-          # Eliminar budgets al nivel base
+          # Eliminar budgets nivel base
           Remove-PropIfExists -obj $build -propName 'budgets'
 
-          # Eliminar budgets en cada configuración (production, development, etc.)
-          $cfgs = $null
-          if ($build.configurations) { $cfgs = $build.configurations }
-          elseif ($build.options -and $build.options.configurations) { $cfgs = $build.options.configurations } # por si acaso
-
+          # Eliminar budgets en cada configuración
+          $cfgs = Get-PropIfExists $build 'configurations'
           if ($cfgs) {
             foreach ($cfgProp in $cfgs.PSObject.Properties) {
-              $cfg = $cfgProp.Value
+              $cfgName = $cfgProp.Name
+              $cfg     = $cfgProp.Value
               Remove-PropIfExists -obj $cfg -propName 'budgets'
+              Write-Host "[$projName/$cfgName] budgets eliminados (si existían)."
             }
           }
         }
 
         ($json | ConvertTo-Json -Depth 100) | Set-Content $angularPath -Encoding UTF8
-
-        Write-Host "Budgets ELIMINADOS de angular.json SOLO para CI (sin errores si no existían)."
+        Write-Host "Budgets ELIMINADOS de angular.json SOLO para CI (robusto)."
       displayName: 'Eliminar budgets (sin límites) solo en CI'
 
-    # Instala dependencias y compila Angular (con diagnósticos)
+    # Instala dependencias y compila Angular
     - powershell: |
         $ErrorActionPreference = 'Stop'
         Set-StrictMode -Version Latest
 
-        # 1) Validar raíz del proyecto
         $root = "$(feRoot)"
         $pkg = Join-Path $root 'package.json'
         if (-not (Test-Path $pkg)) { throw "No se encontró package.json en '$root'. Ajusta feRoot." }
         cd $root
         Write-Host "Working dir: $(Get-Location)"
 
-        # 2) Limpiar estado previo
         if (Test-Path 'node_modules') { Remove-Item -Recurse -Force 'node_modules' }
         if (-not (Test-Path 'package-lock.json')) { throw "Falta package-lock.json (npm ci lo exige)." }
 
@@ -131,48 +149,30 @@ stages:
         if (Test-Path '.npmrc') { Write-Host ".npmrc detectado (registry/auth)." }
         else { Write-Host "Sin .npmrc (asumiendo sin paquetes privados)." }
 
-        # 3) Instalar
         Write-Host ">> npm ci (verbose)"
         npm ci --loglevel verbose
         $ciExit = $LASTEXITCODE
         if ($ciExit -ne 0) {
           Write-Warning "npm ci falló (exit $ciExit). Probando 'npm install --legacy-peer-deps'…"
           npm install --legacy-peer-deps --loglevel verbose
-          $installExit = $LASTEXITCODE
-          if ($installExit -ne 0) {
-            $logsRoot = Join-Path $env:AGENT_WORKFOLDER '_npmcache\_logs'
-            if (Test-Path $logsRoot) {
-              $logDir = Get-ChildItem $logsRoot -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-              if ($logDir) {
-                $log = Get-ChildItem $logDir.FullName -Filter *.log | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-                if ($log) {
-                  Write-Host "===== npm debug log (${log.Name}) ====="
-                  Get-Content $log.FullName -Raw | Write-Host
-                }
-              }
-            }
-            throw "npm install --legacy-peer-deps falló (exit $installExit)."
-          }
+          if ($LASTEXITCODE -ne 0) { throw "npm install --legacy-peer-deps falló." }
         }
 
-        # 4) Validar script build
         $pkgJson = Get-Content 'package.json' -Raw
         if ($pkgJson -notmatch '"build"\s*:\s*".+?"') { throw "No hay script 'build' en package.json (se espera 'ng build')." }
 
-        # 5) Compilar
         Write-Host ">> ng build (production)"
         npm run build -- --configuration production --output-path "dist" --verbose
         if ($LASTEXITCODE -ne 0) { throw "ng build falló ($LASTEXITCODE)" }
       displayName: 'npm ci / install & ng build'
 
-    # Empaqueta salida a ZIP
+    # Empaqueta salida a ZIP (incluye web.config para IIS)
     - powershell: |
         $ErrorActionPreference = 'Stop'
         Set-StrictMode -Version Latest
 
         $srcRoot = "$(Build.SourcesDirectory)"
         $distRoot = Join-Path $srcRoot 'dist'
-
         if (-not (Test-Path $distRoot)) { throw "No existe 'dist' en $distRoot. ¿Falló el build?" }
 
         $sub = Get-ChildItem -Directory $distRoot | Select-Object -First 1
@@ -224,6 +224,6 @@ stages:
             displayName: 'Deploy to $(app_prd)'
             inputs:
               azureSubscription: '$(azureSubscription)'
-              appType: 'webApp'
+              appType: 'webApp'   # Cambiar a 'webAppLinux' si tu App Service es Linux
               appName: '$(app_prd)'
               package: '$(Pipeline.Workspace)/$(artifactName)/$(zipName)'
