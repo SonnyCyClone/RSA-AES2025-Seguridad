@@ -1,1 +1,22 @@
-/* You can add global styles to this file, and also import other style files */
+/* Estilos globales para el Visualizador RSA */
+
+/* Importar tema de Angular Material */
+@import '@angular/material/prebuilt-themes/azure-blue.css';
+
+/* Reset y estilos base */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: Roboto, "Helvetica Neue", sans-serif;
+}
+
+body {
+  background-color: #fafafa;
+  color: #333;
+}

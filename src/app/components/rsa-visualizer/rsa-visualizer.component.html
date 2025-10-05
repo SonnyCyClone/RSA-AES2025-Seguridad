@@ -1,0 +1,531 @@
+<div class="rsa-container">
+  <header class="header">
+    <h1>Visualizador RSA Paso a Paso</h1>
+    <p class="subtitle">Algoritmo de codificación y descodificación RSA</p>
+  </header>
+
+  <div class="controls">
+    <button mat-raised-button color="accent" (click)="copyResults()" 
+            [disabled]="!d" matTooltip="Copiar resultados al portapapeles">
+      <mat-icon>content_copy</mat-icon>
+      <span>Copiar Resultados</span>
+    </button>
+    <button mat-raised-button (click)="reset()" matTooltip="Reiniciar todos los valores">
+      <mat-icon>refresh</mat-icon>
+      <span>Reiniciar</span>
+    </button>
+  </div>
+
+  <!-- Card 1: Parámetros p y q -->
+  <mat-card class="parameter-card">
+    <mat-card-header>
+      <mat-card-title>Paso 1: Selección de Números Primos</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <form [formGroup]="primesForm" class="primes-form">
+        <mat-form-field appearance="outline">
+          <mat-label>Primo p</mat-label>
+          <input matInput type="number" formControlName="p" 
+                 aria-label="Número primo p">
+          <mat-hint>Debe ser un número primo mayor que 2</mat-hint>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline">
+          <mat-label>Primo q</mat-label>
+          <input matInput type="number" formControlName="q"
+                 aria-label="Número primo q">
+          <mat-hint>Debe ser un número primo mayor que 2 y diferente de p</mat-hint>
+        </mat-form-field>
+
+        <button mat-raised-button color="primary" (click)="validateAndCalculate()"
+                aria-label="Validar primos y calcular n y phi">
+          Validar y Calcular
+        </button>
+      </form>
+
+      <div class="results" *ngIf="n !== null && phi !== null">
+        <h4>Resultados:</h4>
+        <mat-chip-set aria-label="Resultados calculados">
+          <mat-chip highlighted><strong>n (módulo)</strong> = {{ n }}</mat-chip>
+          <mat-chip highlighted><strong>φ(n) (totiente)</strong> = {{ phi }}</mat-chip>
+        </mat-chip-set>
+        <div class="formula-box">
+          <p class="formula"><strong>n</strong> = p × q = {{ primesForm.get('p')?.value }} × {{ primesForm.get('q')?.value }} = {{ n }}</p>
+          <p class="formula-explanation">donde <strong>p = {{ primesForm.get('p')?.value }}</strong> y <strong>q = {{ primesForm.get('q')?.value }}</strong> son números primos</p>
+          <p class="formula"><strong>φ(n)</strong> = (p - 1) × (q - 1) = {{ primesForm.get('p')?.value - 1 }} × {{ primesForm.get('q')?.value - 1 }} = {{ phi }}</p>
+        </div>
+      </div>
+    </mat-card-content>
+  </mat-card>
+
+  <!-- Card 2: Exponente e -->
+  <mat-card class="parameter-card" [class.disabled]="!phi">
+    <mat-card-header>
+      <mat-card-title>Paso 2: Selección de Exponente (e)</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <div class="candidates-table" *ngIf="candidateEs.length > 0">
+        <h4>Valores posibles para el exponente e:</h4>
+        <p class="candidates-count">Se encontraron <strong>{{ candidateEs.length }}</strong> candidatos válidos</p>
+        <div class="candidates-grid">
+          <button *ngFor="let candidate of candidateEs" 
+                  class="candidate-chip"
+                  [class.selected]="eForm.get('e')?.value === candidate"
+                  (click)="selectCandidate(candidate)"
+                  type="button"
+                  matTooltip="Click para seleccionar"
+                  [attr.aria-label]="'Seleccionar exponente ' + candidate">
+            {{ candidate }}
+          </button>
+        </div>
+        <p class="hint">Todos cumplen: 1 &lt; e &lt; φ(n) y gcd(e, φ(n)) = 1</p>
+      </div>
+
+      <form [formGroup]="eForm" class="e-form">
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>Ingresa el exponente e</mat-label>
+          <input matInput type="number" formControlName="e"
+                 placeholder="Debe estar en la tabla de arriba"
+                 aria-label="Ingresar exponente e">
+          <mat-hint>Escribe un valor de la tabla de candidatos válidos</mat-hint>
+        </mat-form-field>
+
+        <button mat-raised-button color="primary" (click)="calculateD()"
+                [disabled]="!phi || !eForm.get('e')?.value"
+                aria-label="Calcular exponente privado d">
+          <span>Calcular d (exponente privado)</span>
+        </button>
+      </form>
+
+      <div class="results results-detailed" *ngIf="d !== null">
+        <div class="theorem-box">
+          <h3>🎓 Teorema de Euler</h3>
+          <p class="formula-main">d × e ≡ 1 (mod φ(n))</p>
+          <div class="variables-explanation">
+            <p><strong>Donde:</strong></p>
+            <ul>
+              <li><code>d</code> = exponente privado (valor a calcular)</li>
+              <li><code>e</code> = {{ eForm.get('e')?.value }} (exponente público seleccionado)</li>
+              <li><code>φ(n)</code> = {{ phi }} (función totiente de Euler)</li>
+              <li><code>k</code> = iterador que permite encontrar d</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="formula-box">
+          <h3>📐 Fórmula de cálculo</h3>
+          <p class="formula-secondary">d = (1 + k × φ(n)) / e</p>
+          <p class="constraint">Donde k debe cumplir: (1 + k × φ(n)) % e = 0</p>
+        </div>
+
+        <div class="iterations-box" *ngIf="kIterations.length > 0">
+          <h3>🔄 Proceso iterativo para encontrar k</h3>
+          <div class="iterations-table-wrapper">
+            <table class="iterations-table">
+              <thead>
+                <tr>
+                  <th>k</th>
+                  <th>e</th>
+                  <th>(k × φ(n) + 1) % e</th>
+                  <th>Resultado</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let iteration of kIterations" [class.valid-iteration]="iteration.isValid">
+                  <td>{{ iteration.k }}</td>
+                  <td>{{ iteration.e }}</td>
+                  <td>{{ iteration.remainder }}</td>
+                  <td class="result-icon">{{ iteration.result }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          
+          <div class="iteration-details">
+            <p class="iteration-found"><strong>k = {{ selectedK }}</strong> cumple la condición</p>
+            <p class="iteration-calc">(k × φ(n) + 1) = {{ selectedK }} × {{ phi }} + 1 = <strong>{{ selectedK * (phi || 0) + 1 }}</strong></p>
+            <p class="iteration-verify">Verificación: {{ selectedK * (phi || 0) + 1 }} % {{ eForm.get('e')?.value }} = <span class="success">0 ✓</span></p>
+            <p class="iteration-verify">{{ selectedK * (phi || 0) + 1 }} % {{ eForm.get('e')?.value }} = <span class="success">0 ✓</span></p>
+          </div>
+        </div>
+
+        <div class="final-calc-box">
+          <h3>✨ Cálculo final de d</h3>
+          <p class="formula-step">d = (1 + k × φ(n)) / e</p>
+          <p class="formula-step">d = (1 + {{ selectedK }} × {{ phi }}) / {{ eForm.get('e')?.value }}</p>
+          <p class="formula-step">d = {{ selectedK * (phi || 0) + 1 }} / {{ eForm.get('e')?.value }}</p>
+          <p class="formula-result-final">d = <strong>{{ d }}</strong></p>
+        </div>
+
+
+        <div class="verification-box">
+          <h3>✅ Verificación del Teorema de Euler</h3>
+          <p class="formula">d × e ≡ 1 (mod φ(n))</p>
+          <p class="formula">{{ d }} × {{ eForm.get('e')?.value }} ≡ 1 (mod {{ phi }})</p>
+          <p class="verification">Comprobación: {{ d }} × {{ eForm.get('e')?.value }} mod {{ phi }} = <span class="success">{{ (d! * eForm.get('e')!.value!) % phi! }} ✓</span></p>
+        </div>
+
+        <div class="keys-display">
+          <div class="key-card public">
+            <h4>🔓 Llave pública</h4>
+            <p>[ n = {{ n }}, e = {{ eForm.get('e')?.value }} ]</p>
+          </div>
+          <div class="key-card private">
+            <h4>🔐 Llave privada</h4>
+            <p>[ n = {{ n }}, d = {{ d }} ]</p>
+          </div>
+        </div>
+      </div>
+    </mat-card-content>
+  </mat-card>
+
+  <!-- Card 3: Mensaje -->
+  <mat-card class="parameter-card" [class.disabled]="!d">
+    <mat-card-header>
+      <mat-card-title>Paso 3: Codificar y Descodificar Mensaje</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <form [formGroup]="messageForm" class="message-form">
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>Tipo de codificación</mat-label>
+          <mat-select formControlName="encodingType" aria-label="Tipo de codificación">
+            <mat-option value="ASCII">ASCII</mat-option>
+            <mat-option value="UTF-8">UTF-8</mat-option>
+            <mat-option value="Base64">Base64</mat-option>
+            <mat-option value="Hexadecimal">Hexadecimal</mat-option>
+          </mat-select>
+          <mat-hint>Selecciona el tipo de codificación para el mensaje</mat-hint>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>Mensaje</mat-label>
+          <input matInput formControlName="message" 
+                 placeholder="Ingresa el texto a codificar"
+                 aria-label="Mensaje a codificar">
+          <mat-hint>Escribe el mensaje que deseas codificar</mat-hint>
+        </mat-form-field>
+
+        <div class="button-group">
+          <div class="button-section">
+            <h4>Clave Pública (codificar → descodificar)</h4>
+            <button mat-raised-button color="primary" (click)="encodePublic()"
+                    [disabled]="!d || isCalculating || !messageForm.get('message')?.value"
+                    aria-label="Codificar mensaje con clave pública">
+              <mat-icon>lock</mat-icon>
+              <span>Codificar (Pública)</span>
+            </button>
+            <button mat-raised-button color="accent" (click)="decodePrivate()"
+                    [disabled]="encodedMessage.length === 0 || isCalculating"
+                    aria-label="Descodificar mensaje con clave privada">
+              <mat-icon>lock_open</mat-icon>
+              <span>Descodificar (Privada)</span>
+            </button>
+          </div>
+
+          <div class="button-section">
+            <h4>Clave Privada (firma → verificación)</h4>
+            <button mat-raised-button color="primary" (click)="encodePrivate()"
+                    [disabled]="!d || isCalculating || !messageForm.get('message')?.value"
+                    aria-label="Codificar mensaje con clave privada">
+              <mat-icon>edit</mat-icon>
+              <span>Codificar (Privada)</span>
+            </button>
+            <button mat-raised-button color="accent" (click)="decodePublic()"
+                    [disabled]="encodedPrivateMessage.length === 0 || isCalculating"
+                    aria-label="Descodificar mensaje con clave pública">
+              <mat-icon>verified</mat-icon>
+              <span>Descodificar (Pública)</span>
+            </button>
+          </div>
+        </div>
+
+        <mat-spinner *ngIf="isCalculating" diameter="40"></mat-spinner>
+      </form>
+
+      <div class="message-results" *ngIf="encodedMessage.length > 0">
+        <h4>Mensaje Codificado (Pública):</h4>
+        <pre class="monospace">[ {{ encodedMessage.join(', ') }} ]</pre>
+      </div>
+
+      <div class="message-results" *ngIf="decodedMessage">
+        <h4>Mensaje Descodificado (Privada):</h4>
+        <pre class="monospace">{{ decodedMessage }}</pre>
+      </div>
+
+      <div class="message-results" *ngIf="encodedPrivateMessage.length > 0">
+        <h4>Mensaje Codificado (Privada - Firma):</h4>
+        <pre class="monospace">[ {{ encodedPrivateMessage.join(', ') }} ]</pre>
+      </div>
+
+      <div class="message-results" *ngIf="decodedPublicMessage">
+        <h4>Mensaje Descodificado (Pública - Verificación):</h4>
+        <pre class="monospace">{{ decodedPublicMessage }}</pre>
+      </div>
+    </mat-card-content>
+  </mat-card>
+
+  <!-- Card 4: Paso a paso -->
+  <mat-card class="steps-card" *ngIf="showSteps">
+    <mat-card-header>
+      <mat-card-title>Visualización Paso a Paso</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <mat-stepper orientation="vertical" #stepper>
+        
+        <!-- Paso A: Verificación de Primalidad -->
+        <mat-step label="Verificación de Primalidad de p y q">
+          <div class="step-content">
+            <h3>Verificación de p = {{ primesForm.get('p')?.value }}</h3>
+            <pre class="monospace" *ngIf="primeCheckP">Probando divisores hasta √{{ primesForm.get('p')?.value }} ≈ {{ Math.sqrt(primesForm.get('p')?.value).toFixed(2) }}
+Divisores probados: {{ primeCheckP.divisors.join(', ') }}
+Resultado: {{ primeCheckP.isPrime ? '✓ ES PRIMO' : '✗ NO ES PRIMO' }}</pre>
+
+            <h3>Verificación de q = {{ primesForm.get('q')?.value }}</h3>
+            <pre class="monospace" *ngIf="primeCheckQ">Probando divisores hasta √{{ primesForm.get('q')?.value }} ≈ {{ Math.sqrt(primesForm.get('q')?.value).toFixed(2) }}
+Divisores probados: {{ primeCheckQ.divisors.join(', ') }}
+Resultado: {{ primeCheckQ.isPrime ? '✓ ES PRIMO' : '✗ NO ES PRIMO' }}</pre>
+
+            <button mat-button matStepperNext>Siguiente</button>
+          </div>
+        </mat-step>
+
+        <!-- Paso B: Cálculo de n y φ(n) -->
+        <mat-step label="Cálculo de n y φ(n)">
+          <div class="step-content">
+            <h3>Cálculo de n (módulo)</h3>
+            <pre class="monospace">n = p × q
+n = {{ primesForm.get('p')?.value }} × {{ primesForm.get('q')?.value }}
+n = {{ n }}</pre>
+
+            <h3>Cálculo de φ(n) (función de Euler)</h3>
+            <pre class="monospace">φ(n) = (p - 1) × (q - 1)
+φ(n) = ({{ primesForm.get('p')?.value }} - 1) × ({{ primesForm.get('q')?.value }} - 1)
+φ(n) = {{ primesForm.get('p')?.value - 1 }} × {{ primesForm.get('q')?.value - 1 }}
+φ(n) = {{ phi }}</pre>
+
+            <button mat-button matStepperPrevious>Anterior</button>
+            <button mat-button matStepperNext>Siguiente</button>
+          </div>
+        </mat-step>
+
+        <!-- Paso C: Validación de e -->
+        <mat-step label="Selección y Validación de e">
+          <div class="step-content">
+            <h3>Condiciones para e:</h3>
+            <pre class="monospace">1. 1 &lt; e &lt; φ(n)
+2. gcd(e, φ(n)) = 1 (e y φ(n) son coprimos)</pre>
+
+            <h3>Exponente seleccionado: e = {{ eForm.get('e')?.value }}</h3>
+            <pre class="monospace">Verificación:
+1 &lt; {{ eForm.get('e')?.value }} &lt; {{ phi }} ✓
+gcd({{ eForm.get('e')?.value }}, {{ phi }}) = 1 ✓</pre>
+
+            <h3>Candidatos válidos:</h3>
+            <pre class="monospace">{{ candidateEs.join(', ') }}</pre>
+
+            <button mat-button matStepperPrevious>Anterior</button>
+            <button mat-button matStepperNext>Siguiente</button>
+          </div>
+        </mat-step>
+
+        <!-- Paso D: Cálculo de d con Teorema de Euler -->
+        <mat-step label="Cálculo de d (Teorema de Euler)">
+          <div class="step-content">
+            <div class="theorem-box-stepper">
+              <h3>🎓 Teorema de Euler</h3>
+              <p class="formula-main">d × e ≡ 1 (mod φ(n))</p>
+              <div class="variables-explanation">
+                <p><strong>Donde:</strong></p>
+                <ul>
+                  <li><code>d</code> = exponente privado (valor a calcular)</li>
+                  <li><code>e</code> = {{ eForm.get('e')?.value }} (exponente público)</li>
+                  <li><code>φ(n)</code> = {{ phi }} (totiente de Euler)</li>
+                  <li><code>k</code> = iterador para encontrar d</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="formula-box-stepper">
+              <h3>📐 Fórmula de cálculo</h3>
+              <p class="formula-secondary">d = (1 + k × φ(n)) / e</p>
+              <p class="constraint">Condición: (1 + k × φ(n)) % e = 0</p>
+            </div>
+
+            <div class="iterations-box-stepper" *ngIf="kIterations.length > 0">
+              <h3>🔄 Proceso iterativo para encontrar k</h3>
+              <div class="table-container">
+                <table class="iterations-table">
+                  <thead>
+                    <tr>
+                      <th>k</th>
+                      <th>e</th>
+                      <th>(k × φ(n) + 1) % e</th>
+                      <th>✓/✗</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr *ngFor="let iteration of kIterations" [class.valid-iteration]="iteration.isValid">
+                      <td>{{ iteration.k }}</td>
+                      <td>{{ iteration.e }}</td>
+                      <td>{{ iteration.remainder }}</td>
+                      <td class="result-icon">{{ iteration.result }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <div class="iteration-summary">
+                <p><strong>k = {{ selectedK }}</strong> cumple la condición</p>
+                <p>(k × φ(n) + 1) = {{ selectedK }} × {{ phi }} + 1 = {{ selectedK * (phi || 0) + 1 }}</p>
+                <p>{{ selectedK * (phi || 0) + 1 }} % {{ eForm.get('e')?.value }} = 0 ✓</p>
+              </div>
+            </div>
+
+            <div class="final-calc-box-stepper">
+              <h3>✨ Cálculo final</h3>
+              <pre class="monospace">d = (1 + k × φ(n)) / e
+d = (1 + {{ selectedK }} × {{ phi }}) / {{ eForm.get('e')?.value }}
+d = {{ selectedK * (phi || 0) + 1 }} / {{ eForm.get('e')?.value }}
+d = {{ d }}</pre>
+            </div>
+
+            <div class="verification-box-stepper">
+              <h3>✅ Verificación</h3>
+              <pre class="monospace">{{ d }} × {{ eForm.get('e')?.value }} mod {{ phi }} = {{ (d! * eForm.get('e')!.value!) % phi! }} ✓</pre>
+            </div>
+
+            <button mat-button matStepperPrevious>Anterior</button>
+            <button mat-button matStepperNext>Siguiente</button>
+          </div>
+        </mat-step>
+
+        <!-- Paso E: Codificación del Mensaje -->
+        <mat-step label="Codificación del Mensaje" *ngIf="encodeOperations.length > 0">
+          <div class="step-content">
+            <h3>Codificación Carácter por Carácter (Clave Pública)</h3>
+            <p>Fórmula: C = M<sup>e</sup> mod n</p>
+            
+            <div class="table-container">
+              <table class="operations-table">
+                <thead>
+                  <tr>
+                    <th>Carácter</th>
+                    <th>ASCII (M)</th>
+                    <th>Operación</th>
+                    <th>Resultado (C)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let op of encodeOperations">
+                    <td>{{ op.char }}</td>
+                    <td>{{ op.ascii }}</td>
+                    <td class="monospace">{{ op.operation }}</td>
+                    <td>{{ op.result }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <button mat-button matStepperPrevious>Anterior</button>
+            <button mat-button matStepperNext>Siguiente</button>
+          </div>
+        </mat-step>
+
+        <!-- Paso F: Descodificación del Mensaje -->
+        <mat-step label="Descodificación del Mensaje" *ngIf="decodeOperations.length > 0">
+          <div class="step-content">
+            <h3>Descodificación Carácter por Carácter (Clave Privada)</h3>
+            <p>Fórmula: M = C<sup>d</sup> mod n</p>
+            
+            <div class="table-container">
+              <table class="operations-table">
+                <thead>
+                  <tr>
+                    <th>Codificado (C)</th>
+                    <th>Operación</th>
+                    <th>ASCII (M)</th>
+                    <th>Carácter</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let op of decodeOperations">
+                    <td>{{ op.ascii }}</td>
+                    <td class="monospace">{{ op.operation }}</td>
+                    <td>{{ op.result }}</td>
+                    <td>{{ op.resultChar }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <button mat-button matStepperPrevious>Anterior</button>
+          </div>
+        </mat-step>
+
+        <!-- Paso G: Codificación con Clave Privada (Firma) -->
+        <mat-step label="Codificación con Clave Privada (Firma)" *ngIf="encodePrivateOperations.length > 0">
+          <div class="step-content">
+            <h3>Codificación con Clave Privada (Firma Digital)</h3>
+            <p>Fórmula: S = M<sup>d</sup> mod n</p>
+            
+            <div class="table-container">
+              <table class="operations-table">
+                <thead>
+                  <tr>
+                    <th>Carácter</th>
+                    <th>ASCII (M)</th>
+                    <th>Operación</th>
+                    <th>Resultado (S)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let op of encodePrivateOperations">
+                    <td>{{ op.char }}</td>
+                    <td>{{ op.ascii }}</td>
+                    <td class="monospace">{{ op.operation }}</td>
+                    <td>{{ op.result }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <button mat-button matStepperPrevious>Anterior</button>
+            <button mat-button matStepperNext>Siguiente</button>
+          </div>
+        </mat-step>
+
+        <!-- Paso H: Descodificación con Clave Pública (Verificación) -->
+        <mat-step label="Descodificación con Clave Pública (Verificación)" *ngIf="decodePublicOperations.length > 0">
+          <div class="step-content">
+            <h3>Descodificación con Clave Pública (Verificación de Firma)</h3>
+            <p>Fórmula: M = S<sup>e</sup> mod n</p>
+            
+            <div class="table-container">
+              <table class="operations-table">
+                <thead>
+                  <tr>
+                    <th>Firmado (S)</th>
+                    <th>Operación</th>
+                    <th>ASCII (M)</th>
+                    <th>Carácter</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let op of decodePublicOperations">
+                    <td>{{ op.ascii }}</td>
+                    <td class="monospace">{{ op.operation }}</td>
+                    <td>{{ op.result }}</td>
+                    <td>{{ op.resultChar }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <button mat-button matStepperPrevious>Anterior</button>
+          </div>
+        </mat-step>
+
+      </mat-stepper>
+    </mat-card-content>
+  </mat-card>
+</div>
