@@ -89,13 +89,13 @@ export class RsaVisualizerComponent implements OnInit, AfterViewChecked {
   ) {
     // Formulario para p y q sin valores pre-cargados
     this.primesForm = this.fb.group({
-      p: [null, [Validators.required, Validators.min(3)]],
-      q: [null, [Validators.required, Validators.min(3)]]
+      p: [null, [Validators.required, Validators.min(3), Validators.pattern(/^\d+$/)]],
+      q: [null, [Validators.required, Validators.min(3), Validators.pattern(/^\d+$/)]]
     });
 
     // Formulario para e sin valor pre-cargado
     this.eForm = this.fb.group({
-      e: [null, [Validators.required, Validators.min(2)]]
+      e: [null, [Validators.required, Validators.min(2), Validators.pattern(/^\d+$/)]]
     });
 
     // Formulario para mensaje sin valor pre-cargado
@@ -559,5 +559,31 @@ Descodificado (privado): ${this.decodedMessage}
     this.showSteps = false;
 
     this.snackBar.open('Valores reiniciados', 'Cerrar', { duration: 2000 });
+  }
+
+  /**
+   * Permite solo entrada de números (bloquea letras, símbolos, puntos, comas).
+   * Se usa en el evento keydown de los inputs numéricos.
+   */
+  onlyNumbers(event: KeyboardEvent): void {
+    const key = event.key;
+    
+    // Permitir: Backspace, Delete, Tab, Escape, Enter, Arrow keys
+    const allowedKeys = ['Backspace', 'Delete', 'Tab', 'Escape', 'Enter', 
+                         'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+    
+    if (allowedKeys.includes(key)) {
+      return; // Permitir teclas de navegación
+    }
+    
+    // Permitir: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Z
+    if (event.ctrlKey || event.metaKey) {
+      return; // Permitir shortcuts de edición
+    }
+    
+    // Bloquear si no es un dígito (0-9)
+    if (!/^\d$/.test(key)) {
+      event.preventDefault();
+    }
   }
 }

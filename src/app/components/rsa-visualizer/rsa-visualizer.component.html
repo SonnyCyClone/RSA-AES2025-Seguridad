@@ -26,15 +26,31 @@
         <mat-form-field appearance="outline">
           <mat-label>Primo p</mat-label>
           <input matInput type="number" formControlName="p" 
+                 pattern="[0-9]+" min="3" step="1"
+                 (keydown)="onlyNumbers($event)"
                  aria-label="Número primo p">
-          <mat-hint>Debe ser un número primo mayor que 2</mat-hint>
+          <mat-hint>Debe ser un número primo entero mayor que 2</mat-hint>
+          <mat-error *ngIf="primesForm.get('p')?.hasError('pattern')">
+            Solo se permiten números enteros
+          </mat-error>
+          <mat-error *ngIf="primesForm.get('p')?.hasError('min')">
+            Debe ser mayor que 2
+          </mat-error>
         </mat-form-field>
 
         <mat-form-field appearance="outline">
           <mat-label>Primo q</mat-label>
           <input matInput type="number" formControlName="q"
+                 pattern="[0-9]+" min="3" step="1"
+                 (keydown)="onlyNumbers($event)"
                  aria-label="Número primo q">
-          <mat-hint>Debe ser un número primo mayor que 2 y diferente de p</mat-hint>
+          <mat-hint>Debe ser un número primo entero mayor que 2 y diferente de p</mat-hint>
+          <mat-error *ngIf="primesForm.get('q')?.hasError('pattern')">
+            Solo se permiten números enteros
+          </mat-error>
+          <mat-error *ngIf="primesForm.get('q')?.hasError('min')">
+            Debe ser mayor que 2
+          </mat-error>
         </mat-form-field>
 
         <button mat-raised-button color="primary" (click)="validateAndCalculate()"
@@ -85,9 +101,17 @@
         <mat-form-field appearance="outline" class="full-width">
           <mat-label>Ingresa el exponente e</mat-label>
           <input matInput type="number" formControlName="e"
+                 pattern="[0-9]+" min="2" step="1"
+                 (keydown)="onlyNumbers($event)"
                  placeholder="Debe estar en la tabla de arriba"
                  aria-label="Ingresar exponente e">
-          <mat-hint>Escribe un valor de la tabla de candidatos válidos</mat-hint>
+          <mat-hint>Escribe un valor entero de la tabla de candidatos válidos</mat-hint>
+          <mat-error *ngIf="eForm.get('e')?.hasError('pattern')">
+            Solo se permiten números enteros
+          </mat-error>
+          <mat-error *ngIf="eForm.get('e')?.hasError('min')">
+            Debe ser mayor que 1
+          </mat-error>
         </mat-form-field>
 
         <button mat-raised-button color="primary" (click)="calculateD()"
